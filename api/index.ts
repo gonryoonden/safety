@@ -11,7 +11,10 @@ app.get('/search', (req: Request, res: Response) => {
   const { searchValue = '사다리', category = '0' } = req.query;
 
   const api_url = 'https://apis.data.go.kr/B552468/srch/smartSearch';
-  const serviceKey = '9zazpPLTdHgqjaogVs+zXwzwqFlFWjUnUtuRzwyUtqYMOUHo3HnBXl+gvpebHMreVOqgpfA9NBDbWR0Q9hmOiQ=='; // URL 인코딩된 값
+  const serviceKey = process.env.SERVICE_KEY;'; // vercel 환경변수
+  if (!serviceKey) {
+    throw new Error('SERVICE_KEY가 환경변수에 설정되어 있지 않습니다.');
+  }
 
   const options = {
     url: api_url,
