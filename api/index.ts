@@ -4,42 +4,44 @@ import express, { Request, Response } from 'express';
 import request from 'request';
 
 const app = express();
-const port = 3000;
+const port = process.env.PORT || 3000;
+const serviceKey = process.env.SERVICE_KEY; // Vercel 환경변수
 
-// /search?searchValue=사다리&category=0 형태로 요청 가능
+if (!serviceKey) {
+  console.error('❌ SERVICE_KEY가 설정되지 않았습니다.');
+  process.exit(1);
+}
+
+// 단일 /search 라우트에 풀 스펙 프록시
 app.get('/search', (req: Request, res: Response) => {
-  const { searchValue = '사다리', category = '0' } = req.query;
+  const {
+    pageNo = '1',
+    numOfRows = '10',
+    searchValue = '',
+    category,
+  } = req.query;
 
-  const api_url = 'https://apis.data.go.kr/B552468/srch/smartSearch';
-  const serviceKey = process.env.SERVICE_KEY; // vercel 환경변수
-  if (!serviceKey) {
-    throw new Error('SERVICE_KEY가 환경변수에 설정되어 있지 않습니다.');
-  }
+  const qs: any = { serviceKey, pageNo, numOfRows, searchValue };
+  if (category !== undefined) qs.category = category;
 
   const options = {
-    url: api_url,
-    qs: {
-      serviceKey,
-      pageNo: 1,
-      numOfRows: 10,
-      searchValue,
-      category,
-    },
+    url: 'https://apis.data.go.kr/B552468/srch/smartSearch',
+    qs,
   };
 
-  request.get(options, (error, response, body) => {
-    if (!error && response.statusCode === 200) {
-      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  request.get(options, (err, response, body) => {
+    if (!err && response.statusCode === 200) {
+      res.header('Content-Type', 'application/json; charset=utf-8');
       res.send(body);
     } else {
-      res.status(response?.statusCode || 500).json({
-        error: 'API 요청 실패',
-        details: error,
-      });
+      res
+        .status(response?.statusCode || 500)
+        .json({ error: 'API 요청 실패', details: err });
     }
   });
 });
 
 app.listen(port, () => {
   console.log(`✅ 서버 실행 중: http://localhost:${port}`);
+  console.log(`  • 풀 스펙 검색: GET /search`);
 });
