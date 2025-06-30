@@ -1,18 +1,16 @@
-// index.ts
-
 import express, { Request, Response } from 'express';
 import request from 'request';
 
 const app = express();
 const port = process.env.PORT || 3000;
-const serviceKey = process.env.SERVICE_KEY; // Vercel 환경변수
+const serviceKey = process.env.SERVICE_KEY;
 
 if (!serviceKey) {
-  console.error('❌ SERVICE_KEY가 설정되지 않았습니다.');
+  console.error('SERVICE_KEY가 설정되지 않았습니다.');
   process.exit(1);
 }
 
-// 단일 /search 라우트에 풀 스펙 프록시
+// 단일 /searchGuidelines 라우트에 풀 스펙 프록시
 app.get('/search', (req: Request, res: Response) => {
   const {
     pageNo = '1',
@@ -25,7 +23,7 @@ app.get('/search', (req: Request, res: Response) => {
   if (category !== undefined) qs.category = category;
 
   const options = {
-    url: 'https://apis.data.go.kr/B552468/srch/smartSearch',
+    url: 'https://safety-umber.vercel.app/searchGuidelines',
     qs,
   };
 
@@ -42,6 +40,6 @@ app.get('/search', (req: Request, res: Response) => {
 });
 
 app.listen(port, () => {
-  console.log(`✅ 서버 실행 중: http://localhost:${port}`);
-  console.log(`  • 풀 스펙 검색: GET /search`);
+  console.log(`서버 실행 중: http://localhost:${port}`);
+  console.log(`  • /search (통합 스마트검색)`);
 });
