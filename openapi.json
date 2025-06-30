@@ -1,0 +1,295 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "안전보건공단 스마트검색 API",
+    "version": "1.0.0",
+    "description": "산업안전 위험요인 키워드 및 카테고리 번호를 기반으로 법령·고시·훈령·가이드 등 문서를 검색하는 공공API입니다.",
+    "termsOfService": "https://www.kosha.or.kr/terms",
+    "contact": {
+      "name": "안전보건공단 디지털전략실 빅데이터부",
+      "email": "hjinlee@kosha.or.kr",
+      "url": "https://www.kosha.or.kr"
+    },
+    "license": {
+      "name": "공공데이터포털 오픈API 라이선스",
+      "url": "https://www.data.go.kr/license"
+    }
+  },
+  "externalDocs": {
+    "description": "KOSHA 스마트검색 API 공식 가이드",
+    "url": "https://www.kosha.or.kr/aicuration/index.do"
+  },
+  "servers": [
+    {
+      "url": "https://safety-umber.vercel.app",
+      "description": "프로덕션 프록시 서버 (GitHub CI/CD로 배포된 Node.js가 내부의 공공API로 라우팅)"
+    }
+  ],
+  "paths": {
+    "/api/search": {
+      "get": {
+        "operationId": "searchGuidelines",
+        "summary": "위험요인 키워드 및 카테고리 기반 문서 검색",
+        "description": "searchValue와 category 파라미터를 받아, 관련 법령·고시·훈령·가이드 문서를 조회합니다.",
+        "parameters": [
+          {
+            "name": "serviceKey",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "공공데이터포털에서 발급받은 API 인증키 (URL‐encoded)"
+          },
+          {
+            "name": "pageNo",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            },
+            "description": "페이지 번호 (기본값: 1)"
+          },
+          {
+            "name": "numOfRows",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 10
+            },
+            "description": "페이지당 문서 수 (기본값: 10, 최대: 100)"
+          },
+          {
+            "name": "searchValue",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 100
+            },
+            "description": "검색할 위험요인 키워드 (예: '사다리', '추락')"
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "enum": [0,1,2,3,4,5,6,7,8,9,11],
+              "default": 0
+            },
+            "description": "검색 카테고리 (0=전체,1=법령,2=시행령,3=시행규칙,4=고시·훈령·예규,5=기준,6=미디어,7=KOSHA GUIDE,8=기술지침,9=중대재해처벌법,11=취업 제한 규칙)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "정상 검색 결과 반환",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchResponseEnvelope"
+                },
+                "example": {
+                  "response": {
+                    "header": {
+                      "resultCode": "00",
+                      "resultMsg": "NORMAL_SERVICE"
+                    },
+                    "body": {
+                      "associated_word": ["산업안전보건","안전보건공단"],
+                      "categorycount": { "6": 216, "1": 0 },
+                      "total_media": [
+                        {
+                          "category": "6",
+                          "title": "(건물 등) 일자형 사다리",
+                          "content": "(건물 등) 일자형 사다리",
+                          "highlight_content": "<em class='smart'>일자</em><em class='smart'>사다리</em>",
+                          "doc_id": "KOSHA06_30332_1",
+                          "filepath": "https://kosha.or.kr/aicuration/index.do?mode=detail&medSeq=30332",
+                          "image_path": ["t"],
+                          "keyword": "사다리,종합관리사업,일자형",
+                          "med_thumb_yn": "Y",
+                          "media_style": "OPS",
+                          "score": 797.7339
+                        }
+                      ],
+                      "totalCount": 216,
+                      "dataType": "JSON",
+                      "pageNo": 1,
+                      "numOfRows": 10,
+                      "items": {
+                        "item": [
+                          {
+                            "category": "6",
+                            "title": "이동식사다리 안전작업지침",
+                            "content": "이동식 사다리 안전작업지침 준수사항",
+                            "highlight_content": "<em class='smart'>이동식</em><em class='smart'>사다리</em>",
+                            "doc_id": "KOSHA06_43740_1",
+                            "filepath": "https://kosha.or.kr/aicuration/index.do?mode=detail&medSeq=43740",
+                            "image_path": [],
+                            "keyword": "사다리, 경작업, 고소작업대",
+                            "med_thumb_yn": "N",
+                            "media_style": "OPS",
+                            "score": 825.4923
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "잘못된 요청 (필수 파라미터 누락 등)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "errMsg": "SERVICE ERROR",
+                  "returnAuthMsg": "PAGE_NO_ZERO",
+                  "returnReasonCode": "40"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "서버 내부 오류",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "errMsg": "SERVICE ERROR",
+                  "returnAuthMsg": "UNKNOWN_ERROR",
+                  "returnReasonCode": "42"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "serviceKey": {
+        "type": "apiKey",
+        "in": "query",
+        "name": "serviceKey",
+        "description": "공공데이터포털에서 발급받은 인증키 (URL‐encoded)"
+      }
+    },
+    "schemas": {
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "errMsg": {
+            "type": "string",
+            "description": "오류 메시지"
+          },
+          "returnAuthMsg": {
+            "type": "string",
+            "description": "API 오류 코드"
+          },
+          "returnReasonCode": {
+            "type": "string",
+            "description": "상세 오류 번호"
+          }
+        }
+      },
+      "SmartSearchItem": {
+        "type": "object",
+        "properties": {
+          "category": { "type": "string", "description": "카테고리 번호" },
+          "title": { "type": "string", "description": "문서 제목" },
+          "content": { "type": "string", "description": "본문 내용" },
+          "highlight_content": { "type": "string", "description": "강조 표시된 내용" },
+          "doc_id": { "type": "string", "description": "문서 ID" },
+          "filepath": { "type": "string", "format": "uri", "description": "문서 URL" },
+          "image_path": { "type": "array", "items": { "type": "string" }, "description": "이미지 경로 목록" },
+          "keyword": { "type": "string", "description": "관련 키워드" },
+          "med_thumb_yn": { "type": "string", "enum": ["Y","N"], "description": "썸네일 여부" },
+          "media_style": { "type": "string", "description": "미디어 종류" },
+          "score": { "type": "number", "format": "float", "description": "유사도 점수" }
+        },
+        "required": ["category","title","doc_id","filepath"]
+      },
+      "SmartSearchResponseBody": {
+        "type": "object",
+        "properties": {
+          "associated_word": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "연관 검색어 목록"
+          },
+          "categorycount": {
+            "type": "object",
+            "additionalProperties": { "type": "integer" },
+            "description": "카테고리별 결과 수"
+          },
+          "total_media": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/SmartSearchItem" },
+            "description": "미디어 결과 목록"
+          },
+          "totalCount": {
+            "type": "integer",
+            "description": "전체 검색 결과 수"
+          },
+          "dataType": {
+            "type": "string",
+            "description": "응답 데이터 형식"
+          },
+          "pageNo": {
+            "type": "integer",
+            "description": "현재 페이지 번호"
+          },
+          "numOfRows": {
+            "type": "integer",
+            "description": "페이지당 결과 수"
+          },
+          "items": {
+            "type": "object",
+            "properties": {
+              "item": {
+                "type": "array",
+                "items": { "$ref": "#/components/schemas/SmartSearchItem" },
+                "description": "문서별 상세 결과 배열"
+              }
+            }
+          }
+        },
+        "required": ["associated_word","totalCount","items"]
+      },
+      "SmartSearchResponse": {
+        "type": "object",
+        "properties": {
+          "header": {
+            "type": "object",
+            "properties": {
+              "resultCode": { "type": "string", "description": "결과 코드" },
+              "resultMsg": { "type": "string", "description": "결과 메시지" }
+            },
+            "required": ["resultCode","resultMsg"]
+          },
+          "body": { "$ref": "#/components/schemas/SmartSearchResponseBody" }
+        },
+        "required": ["header","body"]
+      },
+      "SearchResponseEnvelope": {
+        "type": "object",
+        "properties": {
+          "response": { "$ref": "#/components/schemas/SmartSearchResponse" }
+        },
+        "required": ["response"]
+      }
+    }
+  }
+}
