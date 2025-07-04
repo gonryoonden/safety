@@ -1,10 +1,10 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import axios from 'axios';
 
-const OSHA_BASE = process.env.OSHA_API_BASE!;
-const SERVICE_KEY = process.env.OSHA_SERVICE_KEY!;
+const KOSHA_BASE = process.env.KOSHA_API_BASE!;
+const SERVICE_KEY = process.env.KOSHA_SERVICE_KEY!;
 
-const oshaClient = axios.create({ baseURL: OSHA_BASE, timeout: 5000 });
+const KoshaClient = axios.create({ baseURL: KOSHA_BASE, timeout: 5000 });
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const { function_name, arguments: args } = req.body;
@@ -16,7 +16,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         if (!searchValue) {
           return res.status(400).json({ error: 'searchValue is required' });
         }
-        const response = await oshaClient.get('/smartSearch', {
+        const response = await KoshaClient.get('/smartSearch', {
           params: {
             serviceKey: SERVICE_KEY,
             searchValue,
