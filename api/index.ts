@@ -1,45 +1,72 @@
-// index.ts
+import type { NextApiRequest, NextApiResponse } from 'next';
+import axios from 'axios';
 
-import express, { Request, Response } from 'express';
-import request from 'request';
+const OSHA_BASE = process.env.OSHA_API_BASE!;
+const SERVICE_KEY = process.env.OSHA_SERVICE_KEY!;
 
-const app = express();
-const port = 3000;
+const oshaClient = axios.create({ baseURL: OSHA_BASE, timeout: 5000 });
 
-// /search?searchValue=사다리&category=0 형태로 요청 가능
-app.get('/search', (req: Request, res: Response) => {
-  const { searchValue = '사다리', category = '0' } = req.query;
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  const { function_name, arguments: args } = req.body;
 
-  const api_url = 'https://apis.data.go.kr/B552468/srch/smartSearch';
-  const serviceKey = process.env.SERVICE_KEY; // vercel 환경변수
-  if (!serviceKey) {
-    throw new Error('SERVICE_KEY가 환경변수에 설정되어 있지 않습니다.');
-  }
+  try {
+    switch (function_name) {
+      case 'search_safety_law': {
+        const { searchValue, category = 0, pageNo = 1, numOfRows = 10 } = args;
+        if (!searchValue) {
+          return res.status(400).json({ error: 'searchValue is required' });
+        }
+        const response = await oshaClient.get('/smartSearch', {
+          params: {
+            serviceKey: SERVICE_KEY,
+            searchValue,
+            category,
+            pageNo,
+            numOfRows,
+          },
+        });
+        const body = response.data.response.body;
+        return res.status(200).json({ result: body });
+      }
 
-  const options = {
-    url: api_url,
-    qs: {
-      serviceKey,
-      pageNo: 1,
-      numOfRows: 10,
-      searchValue,
-      category,
-    },
-  };
+      case 'get_law_detail': {
+        const { docId } = args;
+        if (!docId) {
+          return res.status(400).json({ error: 'docId is required' });
+        }
+        // 상세조회는 filepath 호출 권장
+        return res.status(200).json({ message: 'Use filepath URL for detail', docId });
+      }
 
-  request.get(options, (error, response, body) => {
-    if (!error && response.statusCode === 200) {
-      res.setHeader('Content-Type', 'application/json; charset=utf-8');
-      res.send(body);
-    } else {
-      res.status(response?.statusCode || 500).json({
-        error: 'API 요청 실패',
-        details: error,
-      });
+      case 'generate_action_plan': {
+        const { lawItems } = args;
+        if (!Array.isArray(lawItems)) {
+          return res.status(400).json({ error: 'lawItems array is required' });
+        }
+        const checklist = lawItems.map((item: any, idx: number) => ({
+          step: idx + 1,
+          title: item.title,
+          action: `문서 확인: ${item.highlight_content}`,
+          link: item.filepath,
+        }));
+        return res.status(200).json({ checklist });
+      }
+
+      case 'analyze_hazard': {
+        const { image_url } = args;
+        if (!image_url) {
+          return res.status(400).json({ error: 'image_url is required' });
+        }
+        // 이미지 분석 로직 또는 모의 데이터
+        const hazards = ['사다리', '크레인'];
+        return res.status(200).json({ hazards });
+      }
+
+      default:
+        return res.status(400).json({ error: `Unknown function: ${function_name}` });
     }
-  });
-});
-
-app.listen(port, () => {
-  console.log(`✅ 서버 실행 중: http://localhost:${port}`);
-});
+  } catch (error: any) {
+    console.error(error);
+    return res.status(500).json({ error: error.message || 'Internal Server Error' });
+  }
+}
