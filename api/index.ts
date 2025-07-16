@@ -1,131 +1,167 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import axios from 'axios';
+import axios, { AxiosError } from 'axios';
+import NodeCache from 'node-cache';
 
-// Next.js의 body 파서를 사용하도록 설정
-export const config = {
-  api: {
-    bodyParser: true
-  }
-};
-
-const KOSHA_BASE = process.env.KOSHA_API_BASE!;
+// ---------- Env & Constants ----------
+const KOSHA_BASE =
+  process.env.KOSHA_API_BASE ?? 'http://apis.data.go.kr/B552468/srch';
 const SERVICE_KEY = process.env.KOSHA_SERVICE_KEY!;
+const CACHE_TTL = 600; // 10 minutes
+const cache = new NodeCache({ stdTTL: CACHE_TTL });
 
-// 재사용을 위한 axios 클라이언트 인스턴스 생성
 const koshaClient = axios.create({
   baseURL: KOSHA_BASE,
-  timeout: 5000
+  timeout: 5000,
+  // HTTP only (API 자체가 HTTPS 미지원)
+  httpAgent: undefined,
+  httpsAgent: undefined
 });
+
+// ---------- Helpers ----------
+const toSafeNumber = (v: any, def: number) =>
+  Number.isFinite(+v) && +v > 0 ? +v : def;
+
+function mapOpenApiError(code: string) {
+  // 일부 주요 코드 매핑
+  switch (code) {
+    case '22': // LIMITED_NUMBER_OF_SERVICE_REQUESTS_EXCEEDS_ERROR
+      return { status: 429, msg: '일일 호출 한도를 초과했습니다.' };
+    case '30': // SERVICE_KEY_IS_NOT_REGISTERED_ERROR
+      return { status: 401, msg: '등록되지 않은 서비스 키입니다.' };
+    case '31': // DEADLINE_HAS_EXPIRED_ERROR
+      return { status: 403, msg: 'API 활용 기간이 만료되었습니다.' };
+    default:
+      return { status: 502, msg: 'KOSHA API 오류가 발생했습니다.' };
+  }
+}
+
+function slim(items: any[]) {
+  return items.map((it) => ({
+    doc_id: it.doc_id,
+    title: it.title,
+    category: it.category,
+    filepath: it.filepath,
+    content_snippet: it.highlight_content ?? it.content
+  }));
+}
+
+// ---------- Handler ----------
+export const config = { api: { bodyParser: true } };
 
 export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse
 ) {
-  // 1. POST 요청만 허용
   if (req.method !== 'POST') {
     res.setHeader('Allow', ['POST']);
-    return res
-      .status(405)
-      .json({ error: 'Method Not Allowed. Please use POST.' });
+    return res.status(405).json({ error: 'POST only' });
   }
 
-  const { function_name, arguments: args } = req.body ?? {};
+  const { function_name, arguments: args = {} } = req.body ?? {};
 
-  // 2. function_name 존재 여부 확인
   if (!function_name) {
-    return res
-      .status(400)
-      .json({ error: '`function_name` is required in the request body.' });
+    return res.status(400).json({ error: '`function_name` is required.' });
   }
 
-  // 3. [핵심 수정] arguments 객체 존재 및 타입 확인
-  if (!args || typeof args !== 'object') {
-    return res.status(400).json({
-      error: `The 'arguments' object is missing or invalid for function: ${function_name}.`
-    });
-  }
+  // 기본 파라미터 보정
+  args.pageNo = toSafeNumber(args.pageNo, 1);
+  args.numOfRows = toSafeNumber(args.numOfRows, 10);
+  args.category = toSafeNumber(args.category, 0);
 
   try {
     switch (function_name) {
-      // 스마트 검색
+      /* ---------- 1) 스마트 검색 ---------- */
       case 'search_safety_law': {
-        const { searchValue } = args as { searchValue?: string };
-        // 4. 함수별 필수 인자 추가 검증
-        if (!searchValue) {
-          return res.status(400).json({
-            error: '`searchValue` is required in arguments for search_safety_law.'
-          });
-        }
-        
-        // serviceKey는 서버에서 추가하고, 나머지 args를 그대로 전달
-        const response = await koshaClient.get('/smartSearch', {
-          params: { serviceKey: SERVICE_KEY, ...args }
-        });
-
-        const body = response.data?.response?.body;
-        return res.status(200).json({ result: body });
-      }
-
-      // 상세 조회
-      case 'get_law_detail': {
-        const { docId } = args as { docId?: string };
-        if (!docId) {
+        const { searchValue, category, pageNo, numOfRows } = args as {
+          searchValue?: string;
+          category: number;
+          pageNo: number;
+          numOfRows: number;
+        };
+        if (!searchValue)
           return res
             .status(400)
-            .json({ error: '`docId` is required for get_law_detail.' });
+            .json({ error: '`searchValue` is required.' });
+
+        // 캐시 키
+        const key = `${searchValue}|${category}|${pageNo}|${numOfRows}`;
+        const cached = cache.get(key);
+        if (cached) {
+          return res.status(200).json({ ...cached, fromCache: true });
+        }
+
+        const { data } = await koshaClient.get('/smartSearch', {
+          params: {
+            serviceKey: SERVICE_KEY,
+            searchValue,
+            category,
+            pageNo,
+            numOfRows
+          },
+          transitional: { clarifyTimeoutError: true }
+        });
+
+        // 오류 코드 변환
+        const openApiCode = data?.response?.header?.resultCode;
+        if (openApiCode !== '00') {
+          const mapped = mapOpenApiError(openApiCode);
+          return res.status(mapped.status).json({ error: mapped.msg });
+        }
+
+        const body = data.response.body;
+        const lite = {
+          totalCount: body.totalCount,
+          pageNo: body.pageNo,
+          numOfRows: body.numOfRows,
+          items: slim(body.items.item ?? []),
+          lastRefresh: new Date().toISOString()
+        };
+        cache.set(key, lite);
+        return res.status(200).json(lite);
+      }
+
+      /* ---------- 2) 요약 ---------- */
+      case 'summarize_law_snippets': {
+        const { snippets } = args as { snippets?: string[] };
+        if (!Array.isArray(snippets) || snippets.length === 0) {
+          return res
+            .status(400)
+            .json({ error: '`snippets` 배열이 필요합니다.' });
+        }
+        // ⬇️  실제 서비스에선 OpenAI 호출; 데모용 간단 합치기
+        const summary = snippets.slice(0, 10).join(' / ');
+        return res.status(200).json({ summary });
+      }
+
+      /* ---------- 3) 개선활동 체크리스트 ---------- */
+      case 'generate_action_plan': {
+        const { summary } = args as { summary?: string };
+        if (!summary) {
+          return res
+            .status(400)
+            .json({ error: '`summary` 필드가 필요합니다.' });
         }
         return res.status(200).json({
-          message: 'Use the filepath URL from search results to fetch detail.',
-          docId
+          checklist: summary.split(/\.|\n/).filter(Boolean).map((s, i) => ({
+            step: i + 1,
+            action: s.trim()
+          }))
         });
       }
 
-      // 개선활동 체크리스트 생성
-      case 'generate_action_plan': {
-        const { lawItems } = args as { lawItems?: any[] };
-        if (!Array.isArray(lawItems)) {
-          return res
-            .status(400)
-            .json({ error: '`lawItems` array is required.' });
-        }
-        const checklist = lawItems.map((item, idx) => ({
-          step: idx + 1,
-          title: item.title,
-          action: `문서 확인: ${item.highlight_content}`,
-          link: item.filepath
-        }));
-        return res.status(200).json({ checklist });
-      }
-
-      // 위험요인 분석
-      case 'analyze_hazard': {
-        const { image_url } = args as { image_url?: string };
-        if (!image_url) {
-          return res
-            .status(400)
-            .json({ error: '`image_url` is required for analyze_hazard.' });
-        }
-        const hazards = ['사다리', '크레인']; // 임시 샘플 데이터
-        return res.status(200).json({ hazards });
-      }
-
-      // 알 수 없는 함수 호출
       default:
-        return res
-          .status(400)
-          .json({ error: `Unknown function: ${function_name}` });
+        return res.status(400).json({ error: 'Unknown function.' });
     }
-  } catch (error: any) {
-    console.error(`[Handler Error for ${function_name}]:`, error);
-
-    // 외부 API(axios) 호출 에러인 경우, 해당 에러 정보를 반환하면 디버깅에 용이
-    if (axios.isAxiosError(error) && error.response) {
-      return res.status(error.response.status).json(error.response.data);
+  } catch (err) {
+    const e = err as AxiosError;
+    if (e.isAxiosError && e.response?.data?.response?.header?.resultCode) {
+      const mapped = mapOpenApiError(
+        e.response.data.response.header.resultCode
+      );
+      return res.status(mapped.status).json({ error: mapped.msg });
     }
-    
-    // 그 외 서버 내부 에러
-    return res
-      .status(500)
-      .json({ error: error.message || 'Internal Server Error' });
+    console.error(err);
+    return res.status(500).json({ error: 'Internal Server Error' });
   }
 }
+
