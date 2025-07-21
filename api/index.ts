@@ -65,6 +65,31 @@ interface SlimItem {
 }
 
 /* ───────── Helpers ───────── */
+// ───── 법령·행정규칙 한글주소 생성 Helper Functions ─────
+function splitTitle(t: string) {
+  // "제XX조" 부분을 매칭하여 조항 번호와 순수 법령명 분리
+  const m = t.match(/제\s*(\d+)\s*조/);
+  return { article: m?.[1], lawName: t.replace(/제\s*(\d+)\s*조.*$/, '').trim() };
+}
+
+function buildLawUrl(item: KoshaBodyItem): string | undefined {
+  const { lawName, article } = splitTitle(item.title);
+  if (!lawName) return undefined;
+
+  const cat = item.category;
+  // 카테고리 값에 따라 law.go.kr 경로의 접두어(prefix) 결정
+  const prefix = ['5'].includes(cat) ? '행정규칙'
+               : ['1','2','3','4','8','9','11'].includes(cat) ? '법령'
+               : null;
+
+  // 법령/행정규칙에 해당하지 않으면 URL 생성 안 함
+  if (!prefix) return undefined;
+
+  const encodedName = encodeURIComponent(lawName);
+  const articlePath = article ? `/제${article}조` : '';
+
+  return `https://www.law.go.kr/${prefix}/${encodedName}${articlePath}`;
+}
 const toSafeNumber = (v: any, def: number) =>
   Number.isFinite(+v) && +v > 0 ? +v : def;
 
@@ -79,11 +104,22 @@ const isValidUrl = (u?: string) => {
 };
 
 const resolveFilepath = (item: KoshaBodyItem): string | undefined => {
+  // 1️⃣ law.go.kr / 행정규칙 한글주소 우선 생성
+  const lawUrl = buildLawUrl(item);
+  if (lawUrl) return lawUrl;
+
+  // 2️⃣ KOSHA API가 내려준 완전한 URL이면 그대로 반환
   if (isValidUrl(item.filepath)) return item.filepath;
-  const isMedia = Number(item.category) === 6;
+
+  // 3️⃣ Fallback: KOSHA 내부 콘텐츠(미디어, 가이드 등) 처리
   const docId = encodeURIComponent(item.doc_id);
-  return isMedia
-    ? `https://kosha.or.kr/aicuration/index.do?mode=detail&medSeq=${docId}`
+  // 카테고리 6(미디어)와 7(가이드)은 KOSHA 내부 콘텐츠로 함께 처리
+  const isMediaOrGuide = ['6', '7'].includes(item.category);
+
+  return isMediaOrGuide
+    // 미디어/가이드는 aicuration 경로를 사용 (medSeq 파라미터 사용 권장)
+    ? `https://kosha.or.kr/aicuration/index.do?mode=detail&medSeq=${docId}` 
+    // 그 외 법령/규칙 등은 viewer 경로 사용
     : `https://kosha.or.kr/kosha/viewer/lawDetail.do?docId=${docId}`;
 };
 
