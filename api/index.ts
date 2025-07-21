@@ -132,11 +132,10 @@ const resolveFilepath = (item: KoshaBodyItem): string | undefined => {
 };
 
 const slim = (items: KoshaBodyItem[]): SlimItem[] => {
-  const INV = '';
   return items
     .map((it) => {
-      const snippetSrc = it.highlight_content ?? it.content ?? '';
-      const snippet = snippetSrc.includes(INV) ? '' : snippetSrc;
+      // content 또는 highlight_content를 그대로 snippet으로 사용합니다.
+      const snippet = it.highlight_content ?? it.content ?? '';
       return {
         doc_id: it.doc_id,
         title: it.title,
@@ -146,7 +145,8 @@ const slim = (items: KoshaBodyItem[]): SlimItem[] => {
         score: it.score
       };
     })
-    .filter((i) => i.filepath && i.content_snippet !== '');
+    // 유효한 링크(filepath)가 있고, 내용(snippet)이 비어있지 않은 항목만 최종 결과에 포함합니다.
+    .filter((i) => i.filepath && i.content_snippet);
 };
 
 const mapOpenApiError = (code: string) => {
