@@ -65,31 +65,53 @@ interface SlimItem {
 }
 
 /* ───────── Helpers ───────── */
-// ───── 법령·행정규칙 한글주소 생성 Helper Functions ─────
+// 카테고리 번호와 법령명을 미리 매핑합니다.
+const categoryToLawNameMap: { [key: string]: string } = {
+  '1': '산업안전보건법',
+  '2': '산업안전보건법 시행령',
+  '3': '산업안전보건법 시행규칙',
+  '4': '산업안전보건기준에관한규칙',
+  '8': '중대재해처벌법',
+  '9': '중대재해처벌법 시행령',
+  '11': '유해위험작업의 취업제한에 관한 규칙',
+};
+
 function splitTitle(t: string) {
-  // "제XX조" 부분을 매칭하여 조항 번호와 순수 법령명 분리
   const m = t.match(/제\s*(\d+)\s*조/);
-  return { article: m?.[1], lawName: t.replace(/제\s*(\d+)\s*조.*$/, '').trim() };
+  // title에서 법령명 부분을 추출하는 로직 (주로 카테고리 5를 위해 사용)
+  const lawName = t.replace(/제\s*(\d+)\s*조.*$/, '').trim();
+  return { article: m?.[1], inferredLawName: lawName };
 }
 
 function buildLawUrl(item: KoshaBodyItem): string | undefined {
-  const { lawName, article } = splitTitle(item.title);
-  if (!lawName) return undefined;
-
   const cat = item.category;
-  // 카테고리 값에 따라 law.go.kr 경로의 접두어(prefix) 결정
-  const prefix = ['5'].includes(cat) ? '행정규칙'
-               : ['1','2','3','4','8','9','11'].includes(cat) ? '법령'
-               : null;
+  const { article, inferredLawName } = splitTitle(item.title);
 
-  // 법령/행정규칙에 해당하지 않으면 URL 생성 안 함
-  if (!prefix) return undefined;
+  let lawName: string | undefined;
+  let prefix: '법령' | '행정규칙' | null = null;
+
+  // 1. 카테고리 번호로 법령명을 찾을 수 있는 경우 (가장 정확)
+  if (categoryToLawNameMap[cat]) {
+    lawName = categoryToLawNameMap[cat];
+    prefix = '법령';
+  } 
+  // 2. 행정규칙(고시 등)의 경우, title에서 법령명을 유추
+  else if (cat === '5') {
+    lawName = inferredLawName;
+    prefix = '행정규칙';
+  }
+
+  // 유효한 법령명이나 prefix가 없으면 링크 생성 불가
+  if (!lawName || !prefix) {
+    return undefined;
+  }
 
   const encodedName = encodeURIComponent(lawName);
   const articlePath = article ? `/제${article}조` : '';
 
   return `https://www.law.go.kr/${prefix}/${encodedName}${articlePath}`;
 }
+
 const toSafeNumber = (v: any, def: number) =>
   Number.isFinite(+v) && +v > 0 ? +v : def;
 
@@ -104,27 +126,13 @@ const isValidUrl = (u?: string) => {
 };
 
 const resolveFilepath = (item: KoshaBodyItem): string | undefined => {
-  // 1️⃣ law.go.kr / 행정규칙 한글주소 우선 생성
-  const lawUrl = buildLawUrl(item);
-  if (lawUrl) return lawUrl;
-
-  // 2️⃣ KOSHA API가 내려준 완전한 URL이면 그대로 반환
-  if (isValidUrl(item.filepath)) return item.filepath;
-
-  // 3️⃣ Fallback: KOSHA 내부 콘텐츠(미디어, 가이드 등) 처리
-  const docId = encodeURIComponent(item.doc_id);
-  // 카테고리 6(미디어)와 7(가이드)은 KOSHA 내부 콘텐츠로 함께 처리
-  const isMediaOrGuide = ['6', '7'].includes(item.category);
-
-  return isMediaOrGuide
-    // 미디어/가이드는 aicuration 경로를 사용 (medSeq 파라미터 사용 권장)
-    ? `https://kosha.or.kr/aicuration/index.do?mode=detail&medSeq=${docId}` 
-    // 그 외 법령/규칙 등은 viewer 경로 사용
-    : `https://kosha.or.kr/kosha/viewer/lawDetail.do?docId=${docId}`;
+  // 유일하게 신뢰할 수 있는 `law.go.kr` 링크 생성'만'을 시도합니다.
+  // 이 함수가 undefined를 반환하면, slim() 함수에서 필터링되어 사용자에게는 보이지 않게 됩니다.
+  return buildLawUrl(item);
 };
 
 const slim = (items: KoshaBodyItem[]): SlimItem[] => {
-  const INV = '<!-- inv_blank -->';
+  const INV = '';
   return items
     .map((it) => {
       const snippetSrc = it.highlight_content ?? it.content ?? '';
