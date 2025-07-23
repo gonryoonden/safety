@@ -59,13 +59,12 @@ interface SlimItem {
   doc_id: string;
   title: string;
   category: string;
-  filepath?: string;
+  filepath: string; // [수정] optional이 아닌 필수로 변경
   content_snippet: string;
   score?: number;
 }
 
 /* ───────── Helpers ───────── */
-// 카테고리 번호와 법령명을 미리 매핑합니다.
 const categoryToLawNameMap: { [key: string]: string } = {
   '1': '산업안전보건법',
   '2': '산업안전보건법 시행령',
@@ -78,7 +77,6 @@ const categoryToLawNameMap: { [key: string]: string } = {
 
 function splitTitle(t: string) {
   const m = t.match(/제\s*(\d+)\s*조/);
-  // title에서 법령명 부분을 추출하는 로직 (주로 카테고리 5를 위해 사용)
   const lawName = t.replace(/제\s*(\d+)\s*조.*$/, '').trim();
   return { article: m?.[1], inferredLawName: lawName };
 }
@@ -90,18 +88,14 @@ function buildLawUrl(item: KoshaBodyItem): string | undefined {
   let lawName: string | undefined;
   let prefix: '법령' | '행정규칙' | null = null;
 
-  // 1. 카테고리 번호로 법령명을 찾을 수 있는 경우 (가장 정확)
   if (categoryToLawNameMap[cat]) {
     lawName = categoryToLawNameMap[cat];
     prefix = '법령';
-  } 
-  // 2. 행정규칙(고시 등)의 경우, title에서 법령명을 유추
-  else if (cat === '5') {
+  } else if (cat === '5') {
     lawName = inferredLawName;
     prefix = '행정규칙';
   }
 
-  // 유효한 법령명이나 prefix가 없으면 링크 생성 불가
   if (!lawName || !prefix) {
     return undefined;
   }
@@ -115,52 +109,62 @@ function buildLawUrl(item: KoshaBodyItem): string | undefined {
 const toSafeNumber = (v: any, def: number) =>
   Number.isFinite(+v) && +v > 0 ? +v : def;
 
-const isValidUrl = (u?: string) => {
-  if (!u) return false;
+// [수정] 유효성 검사 함수
+const isValidUrl = (urlString?: string): boolean => {
+  if (!urlString) return false;
   try {
-    const p = new URL(u);
-    return p.protocol === 'http:' || p.protocol === 'https:';
+    const url = new URL(urlString);
+    return url.protocol === 'http:' || url.protocol === 'https:';
   } catch {
     return false;
   }
 };
 
+// [수정] 데이터 손실을 막기 위한 폴백 로직 추가
 const resolveFilepath = (item: KoshaBodyItem): string | undefined => {
-  // 유일하게 신뢰할 수 있는 `law.go.kr` 링크 생성'만'을 시도합니다.
-  // 이 함수가 undefined를 반환하면, slim() 함수에서 필터링되어 사용자에게는 보이지 않게 됩니다.
-  return buildLawUrl(item);
+  const lawUrl = buildLawUrl(item);
+  if (lawUrl) return lawUrl;
+
+  if (isValidUrl(item.filepath)) {
+    return item.filepath;
+  }
+
+  return undefined;
 };
 
+// [수정] 안전한 필터링 로직으로 개선
 const slim = (items: KoshaBodyItem[]): SlimItem[] => {
   return items
     .map((it) => {
-      // content 또는 highlight_content를 그대로 snippet으로 사용합니다.
       const snippet = it.highlight_content ?? it.content ?? '';
+      const resolvedPath = resolveFilepath(it);
+
+      if (!resolvedPath || !snippet) {
+        return null;
+      }
+
       return {
         doc_id: it.doc_id,
         title: it.title,
         category: it.category,
-        filepath: resolveFilepath(it),
+        filepath: resolvedPath,
         content_snippet: snippet,
-        score: it.score
+        score: it.score,
       };
     })
-    // 유효한 링크(filepath)가 있고, 내용(snippet)이 비어있지 않은 항목만 최종 결과에 포함합니다.
-    .filter((i) => i.filepath && i.content_snippet);
+    .filter((i): i is SlimItem => i !== null);
 };
+
 
 const mapOpenApiError = (code: string) => {
   switch (code) {
-    case '22':
-      return { status: 429, msg: '일일 호출 한도를 초과했습니다.' };
-    case '30':
-      return { status: 401, msg: '등록되지 않은 서비스 키입니다.' };
-    case '31':
-      return { status: 403, msg: 'API 활용 기간이 만료되었습니다.' };
-    case '40':
-      return { status: 400, msg: '페이지 번호는 0보다 커야 합니다.' };
-    default:
-      return { status: 502, msg: `KOSHA API 오류 (code ${code})` };
+    case '22': return { status: 429, msg: '일일 호출 한도를 초과했습니다.' };
+    case '30': return { status: 401, msg: '등록되지 않은 서비스 키입니다.' };
+    case '31': return { status: 403, msg: 'API 활용 기간이 만료되었습니다.' };
+    case '40': return { status: 400, msg: '페이지 번호는 0보다 커야 합니다.' };
+    case '42': return { status: 500, msg: 'KOSHA API 내부 오류가 발생했습니다.' };
+    case '45': return { status: 403, msg: '잘못된 접근입니다 (게이트웨이).' };
+    default: return { status: 502, msg: `KOSHA API 오류 (code ${code})` };
   }
 };
 
@@ -206,31 +210,46 @@ export default async function handler(
         const cached = cache.get(key);
         if (cached) return res.status(200).json(cached);
 
-        const { data } = await koshaClient.get('/smartSearch', {
+        // [수정] 에러 처리를 위해 전체 응답을 받도록 변경
+        const response = await koshaClient.get('/smartSearch', {
           params: {
             serviceKey: SERVICE_KEY,
             searchValue,
             category,
             pageNo,
             numOfRows,
-            dataType: 'JSON' // 명시
+            dataType: 'JSON'
           },
           transitional: { clarifyTimeoutError: true },
-          validateStatus: (s) => s >= 200 && s < 500
+          validateStatus: () => true // 모든 HTTP 상태 코드를 .then()으로 전달
         });
 
-        if (typeof data !== 'object' || !data?.response?.body)
-          return res
-            .status(502)
-            .json({ error: 'KOSHA API에서 비정상 응답이 반환되었습니다.' });
+        // [추가] XML 응답(게이트웨이 에러)을 먼저 확인 (라이브러리 없이)
+        const contentType = response.headers['content-type'] ?? '';
+        if (contentType.includes('xml')) {
+            return res.status(401).json({
+                error: 'KOSHA API Gateway 오류가 발생했습니다. 서비스 키 또는 호출 한도를 확인하세요.'
+            });
+        }
+        
+        // [추가] 비정상 HTTP 상태 코드 처리
+        if (response.status !== 200) {
+            return res.status(502).json({ 
+                error: `KOSHA API가 비정상 상태 코드(${response.status})를 반환했습니다.` 
+            });
+        }
 
-        const api = data as KoshaApiResponse;
+        // [수정] 응답 데이터 변수명 변경 (response.data -> api)
+        const api = response.data as KoshaApiResponse;
         if (api.response.header.resultCode !== '00') {
           const mapped = mapOpenApiError(api.response.header.resultCode);
           return res.status(mapped.status).json({ error: mapped.msg });
         }
 
-        // 문서·미디어 합치기
+        if (!api?.response?.body) {
+          return res.status(502).json({ error: 'KOSHA API에서 비정상 응답이 반환되었습니다.' });
+        }
+
         const items: KoshaBodyItem[] = [
           ...(api.response.body.items?.item ?? []),
           ...(api.response.body.total_media ?? [])
@@ -246,9 +265,9 @@ export default async function handler(
 
         if (lite.items.length)
           cache.set(key, lite);
-        else cache.del(key); // 빈 결과 캐시 안 함
+        else cache.del(key); 
 
-        failureCount = 0; // 성공 → 실패 카운터 초기화
+        failureCount = 0;
         return res.status(200).json(lite);
       }
 
